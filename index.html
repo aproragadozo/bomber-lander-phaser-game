@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Making your first Phaser 3 Game - Part 1</title>
+    <script src="//cdn.jsdelivr.net/npm/phaser@3.11.0/dist/phaser.js"></script>
+    <style type="text/css">
+        body {
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+
+<script type="text/javascript">
+
+    // Difficulty settings
+    var difficultySettings = {
+        easy: { startSpeed: 50, speedIncrement: 5 },
+        medium: { startSpeed: 80, speedIncrement: 10 },
+        hard: { startSpeed: 120, speedIncrement: 15 }
+    };
+    var currentDifficulty = 'medium';
+
+    // High score functions
+    function getHighScore(difficulty) {
+        try {
+            var data = localStorage.getItem('starBomberHighScores');
+            if (data) {
+                var scores = JSON.parse(data);
+                return scores[difficulty] || 0;
+            }
+        } catch (e) {
+            console.log('Error reading high scores:', e);
+        }
+        return 0;
+    }
+
+    function setHighScore(difficulty, newScore) {
+        try {
+            var data = localStorage.getItem('starBomberHighScores');
+            var scores = data ? JSON.parse(data) : {};
+            scores[difficulty] = newScore;
+            localStorage.setItem('starBomberHighScores', JSON.stringify(scores));
+        } catch (e) {
+            console.log('Error saving high score:', e);
+        }
+    }
+
+    function checkAndUpdateHighScore(difficulty, newScore) {
+        var currentHigh = getHighScore(difficulty);
+        if (newScore > currentHigh) {
+            setHighScore(difficulty, newScore);
+            return true; // new high score!
+        }
+        return false;
+    }
+
+    var player;
+    var stars;
+    var platforms;
+    var cursors;
+    var bombs;
+    var spaceKey;
+    var gameOver = false;
+    var canRestart = false;
+    var score = 500;
+    var scoreText;
+    var scoreTimer;
+    var columnSpacing = 40;
+    var startX = 20;
+    var audioCtx;
+    var starEmitter;
+    var ship_speed;
+
+    function playStarSound() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        var oscillator = audioCtx.createOscillator();
+        var gainNode = audioCtx.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        oscillator.frequency.value = 600;
+        oscillator.type = 'square';
+        gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+        oscillator.start(audioCtx.currentTime);
+        oscillator.stop(audioCtx.currentTime + 0.1);
+    }
+
+    function playMissSound() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        var oscillator = audioCtx.createOscillator();
+        var gainNode = audioCtx.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(80, audioCtx.currentTime + 0.2);
+        oscillator.type = 'sawtooth';
+        gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+        oscillator.start(audioCtx.currentTime);
+        oscillator.stop(audioCtx.currentTime + 0.2);
+    }
+
+    function playExplosionSound() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        // noise burst for explosion
+        var bufferSize = audioCtx.sampleRate * 0.5;
+        var buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+        var data = buffer.getChannelData(0);
+        for (var i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+        }
+        var noise = audioCtx.createBufferSource();
+        noise.buffer = buffer;
+        var noiseGain = audioCtx.createGain();
+        noise.connect(noiseGain);
+        noiseGain.connect(audioCtx.destination);
+        noiseGain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+        noiseGain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+        noise.start(audioCtx.currentTime);
+        noise.stop(audioCtx.currentTime + 0.5);
+        // low rumble
+        var oscillator = audioCtx.createOscillator();
+        var oscGain = audioCtx.createGain();
+        oscillator.connect(oscGain);
+        oscGain.connect(audioCtx.destination);
+        oscillator.frequency.setValueAtTime(80, audioCtx.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(30, audioCtx.currentTime + 0.5);
+        oscillator.type = 'sine';
+        oscGain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        oscGain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+        oscillator.start(audioCtx.currentTime);
+        oscillator.stop(audioCtx.currentTime + 0.5);
+    }
+
+    function playFanfare() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        var notes = [523, 659, 784, 1047]; // C5, E5, G5, C6
+        notes.forEach(function(freq, i) {
+            var osc = audioCtx.createOscillator();
+            var gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.frequency.value = freq;
+            osc.type = 'triangle';
+            var startTime = audioCtx.currentTime + i * 0.15;
+            gain.gain.setValueAtTime(0, startTime);
+            gain.gain.linearRampToValueAtTime(0.3, startTime + 0.05);
+            gain.gain.linearRampToValueAtTime(0.15, startTime + 0.3);
+            gain.gain.linearRampToValueAtTime(0, startTime + 0.5);
+            osc.start(startTime);
+            osc.stop(startTime + 0.5);
+        });
+    }
+
+    function playSelectSound() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        var osc = audioCtx.createOscillator();
+        var gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.frequency.value = 440;
+        osc.type = 'sine';
+        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+        osc.start(audioCtx.currentTime);
+        osc.stop(audioCtx.currentTime + 0.1);
+    }
+
+    var fuelSoundOsc = null;
+    var fuelSoundGain = null;
+    function startFuelSound() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        fuelSoundOsc = audioCtx.createOscillator();
+        fuelSoundGain = audioCtx.createGain();
+        var filter = audioCtx.createBiquadFilter();
+        fuelSoundOsc.connect(filter);
+        filter.connect(fuelSoundGain);
+        fuelSoundGain.connect(audioCtx.destination);
+        fuelSoundOsc.type = 'sawtooth';
+        fuelSoundOsc.frequency.value = 60;
+        filter.type = 'lowpass';
+        filter.frequency.value = 200;
+        fuelSoundGain.gain.value = 0.15;
+        // modulate frequency for bubbling effect
+        var lfo = audioCtx.createOscillator();
+        var lfoGain = audioCtx.createGain();
+        lfo.connect(lfoGain);
+        lfoGain.connect(fuelSoundOsc.frequency);
+        lfo.frequency.value = 8;
+        lfoGain.gain.value = 20;
+        lfo.start();
+        fuelSoundOsc.start();
+    }
+
+    function stopFuelSound() {
+        if (fuelSoundGain) {
+            fuelSoundGain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+        }
+        if (fuelSoundOsc) {
+            fuelSoundOsc.stop(audioCtx.currentTime + 0.3);
+            fuelSoundOsc = null;
+        }
+    }
+
+    // Basketball organ music
+    var organPlaying = false;
+    var organInterval = null;
+    var organTempo = 200; // ms between notes
+    var organNoteIndex = 0;
+    var organGainNode = null;
+
+    // Classic basketball organ riff pattern (frequencies in Hz)
+    var organPattern = [
+        [392, 494], // G4, B4
+        [440, 554], // A4, C#5
+        [494, 622], // B4, D#5
+        [523, 659], // C5, E5
+        [494, 622], // B4, D#5
+        [440, 554], // A4, C#5
+        [392, 494], // G4, B4
+        [330, 415], // E4, G#4
+    ];
+
+    function playOrganNote(frequencies, duration) {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        // Create organ sound with multiple harmonics
+        frequencies.forEach(function(freq) {
+            // Fundamental
+            var osc1 = audioCtx.createOscillator();
+            var osc2 = audioCtx.createOscillator();
+            var osc3 = audioCtx.createOscillator();
+
+            var gain = audioCtx.createGain();
+
+            osc1.type = 'sine';
+            osc1.frequency.value = freq;
+
+            osc2.type = 'sine';
+            osc2.frequency.value = freq * 2; // 2nd harmonic
+
+            osc3.type = 'triangle';
+            osc3.frequency.value = freq * 3; // 3rd harmonic
+
+            osc1.connect(gain);
+            osc2.connect(gain);
+            osc3.connect(gain);
+
+            if (!organGainNode) {
+                organGainNode = audioCtx.createGain();
+                organGainNode.connect(audioCtx.destination);
+                organGainNode.gain.value = 0.08;
+            }
+            gain.connect(organGainNode);
+
+            gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.12, audioCtx.currentTime + duration * 0.1);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+
+            osc1.start(audioCtx.currentTime);
+            osc2.start(audioCtx.currentTime);
+            osc3.start(audioCtx.currentTime);
+
+            osc1.stop(audioCtx.currentTime + duration);
+            osc2.stop(audioCtx.currentTime + duration);
+            osc3.stop(audioCtx.currentTime + duration);
+        });
+    }
+
+    function startOrganMusic() {
+        if (organPlaying) return;
+        organPlaying = true;
+        organNoteIndex = 0;
+
+        function playNextNote() {
+            if (!organPlaying) return;
+
+            var note = organPattern[organNoteIndex % organPattern.length];
+            playOrganNote(note, organTempo / 1000 * 0.8);
+
+            organNoteIndex++;
+
+            organInterval = setTimeout(playNextNote, organTempo);
+        }
+
+        playNextNote();
+    }
+
+    function stopOrganMusic() {
+        organPlaying = false;
+        if (organInterval) {
+            clearTimeout(organInterval);
+            organInterval = null;
+        }
+    }
+
+    function updateOrganTempo(speed) {
+        // Map ship speed to tempo: faster ship = faster music
+        // Speed ranges roughly from 50-200+, map to tempo 250-100ms
+        var absSpeed = Math.abs(speed);
+        organTempo = Math.max(80, 300 - absSpeed);
+    }
+
+    // Title Scene
+    class TitleScene extends Phaser.Scene {
+        constructor() {
+            super({ key: 'TitleScene' });
+        }
+
+        create() {
+            var self = this;
+            this.selectedIndex = 1; // Start on medium
+            this.options = ['easy', 'medium', 'hard'];
+
+            // Title
+            this.add.text(400, 120, 'STAR BOMBER', { fontSize: '64px', fill: '#fff' }).setOrigin(0.5);
+
+            // Difficulty options with high scores
+            this.optionTexts = [];
+            this.highScoreTexts = [];
+            var labels = ['EASY', 'MEDIUM', 'HARD'];
+            for (var i = 0; i < 3; i++) {
+                var text = this.add.text(400, 250 + i * 60, labels[i], { fontSize: '32px', fill: '#fff' }).setOrigin(0.5);
+                this.optionTexts.push(text);
+                var highScore = getHighScore(this.options[i]);
+                var hsText = this.add.text(520, 250 + i * 60, highScore > 0 ? 'HI: ' + highScore : '', { fontSize: '18px', fill: '#888' }).setOrigin(0, 0.5);
+                this.highScoreTexts.push(hsText);
+            }
+
+            // Instructions
+            this.add.text(400, 450, 'Use UP/DOWN to select, ENTER to start', { fontSize: '18px', fill: '#aaa' }).setOrigin(0.5);
+
+            // Selector arrow
+            this.arrow = this.add.text(280, 250 + this.selectedIndex * 60, '>', { fontSize: '32px', fill: '#ff0' }).setOrigin(0.5);
+
+            this.updateSelection();
+
+            // Input
+            this.cursors = this.input.keyboard.createCursorKeys();
+            this.enterKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
+
+            this.canInput = true;
+        }
+
+        updateSelection() {
+            // Update arrow position
+            this.arrow.y = 250 + this.selectedIndex * 60;
+
+            // Update text colors
+            for (var i = 0; i < this.optionTexts.length; i++) {
+                if (i === this.selectedIndex) {
+                    this.optionTexts[i].setFill('#ff0');
+                } else {
+                    this.optionTexts[i].setFill('#fff');
+                }
+            }
+        }
+
+        update() {
+            if (!this.canInput) return;
+
+            if (Phaser.Input.Keyboard.JustDown(this.cursors.up)) {
+                this.selectedIndex = (this.selectedIndex - 1 + 3) % 3;
+                playSelectSound();
+                this.updateSelection();
+            } else if (Phaser.Input.Keyboard.JustDown(this.cursors.down)) {
+                this.selectedIndex = (this.selectedIndex + 1) % 3;
+                playSelectSound();
+                this.updateSelection();
+            }
+
+            if (Phaser.Input.Keyboard.JustDown(this.enterKey)) {
+                this.canInput = false;
+                currentDifficulty = this.options[this.selectedIndex];
+                playFanfare();
+                this.time.delayedCall(600, () => {
+                    this.scene.start('GameScene');
+                });
+            }
+        }
+    }
+
+    // Game Scene
+    class GameScene extends Phaser.Scene {
+        constructor() {
+            super({ key: 'GameScene' });
+        }
+
+        preload() {
+            this.load.image('sky', 'assets/sky.png');
+            this.load.image('ground', 'assets/platform.png');
+            this.load.image('star', 'assets/star.png');
+            this.load.image('bomb', 'assets/bomb.png');
+            this.load.spritesheet('dude', 'assets/dude.png', { frameWidth: 32, frameHeight: 48 });
+        }
+
+        create() {
+            gameOver = false;
+
+            stars = this.physics.add.group();
+            var numColumns = 20;
+            // stack the stars in columns of varying heights
+            for (var col = 0; col < numColumns; col++) {
+                var height = Phaser.Math.Between(1, 5);
+                var xPos = startX + (col * columnSpacing);
+
+                // nested loop
+                for (var row = 0; row < height; row++) {
+                    var yPos = 500 - 20 - (row * 40);
+                    // here's where I actually create the stars to add to the group
+                    var star = stars.create(xPos, yPos, 'star');
+                    star.setScale(1.6);
+                    star.setCollideWorldBounds(true);
+                    star.body.setAllowGravity(false);
+                    star.setImmovable(true);
+                }
+            }
+
+            // spaceship
+            player = this.physics.add.sprite(20, 20, 'bomb').setScale(2);
+            player.setCollideWorldBounds(true);
+            player.body.setAllowGravity(false);
+
+            // spaceship speed based on difficulty
+            var settings = difficultySettings[currentDifficulty];
+            ship_speed = settings.startSpeed;
+            var speedIncrement = settings.speedIncrement;
+
+            player.body.onWorldBounds = true;
+
+            player.onWorldBounds = function() {
+                this.y += 20;
+                // speed up slightly each row
+                var sign = ship_speed > 0 ? 1 : -1;
+                ship_speed = -sign * (Math.abs(ship_speed) + speedIncrement);
+            };
+
+            this.physics.world.on('worldbounds', (body) => {
+                body.gameObject.onWorldBounds();
+            });
+
+            bombs = this.physics.add.group();
+
+            // spacebar should drop bombs
+            spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+
+            // bombs
+            var graphics = this.add.graphics();
+            graphics.fillStyle(0xffffff, 1);
+            graphics.fillRect(0, 0, 6, 12);
+            graphics.generateTexture('bombTexture', 6, 12);
+            // particle texture
+            graphics.clear();
+            graphics.fillStyle(0xffff00, 1);
+            graphics.fillRect(0, 0, 4, 4);
+            graphics.generateTexture('particleTexture', 4, 4);
+            graphics.destroy();
+
+            // particle emitter for star explosions
+            var particles = this.add.particles('particleTexture');
+            starEmitter = particles.createEmitter({
+                speed: { min: 50, max: 150 },
+                angle: { min: 0, max: 360 },
+                scale: { start: 1, end: 0 },
+                lifespan: 400,
+                gravityY: 200,
+                on: false
+            });
+
+            // score display
+            score = 500;
+            scoreText = this.add.text(config.width - 16, 16, 'Score: ' + score, { fontSize: '24px', fill: '#fff' }).setOrigin(1, 0);
+
+            // start background music
+            startOrganMusic();
+
+            // score countdown timer
+            scoreTimer = this.time.addEvent({
+                delay: 1000,
+                callback: () => {
+                    if (!gameOver && score > 0) {
+                        score--;
+                        scoreText.setText('Score: ' + score);
+                    }
+                },
+                loop: true
+            });
+
+            // game over method
+            var self = this;
+            let overHandler = (text) => {
+                gameOver = true;
+                scoreTimer.remove();
+                stopOrganMusic();
+                self.physics.pause();
+                self.add.text(config.width / 2, config.height / 2, text + '\nScore: ' + score, { fontSize: '64px', fill: '#fff', align: 'center' }).setOrigin(0.5);
+                // check for high score
+                if (checkAndUpdateHighScore(currentDifficulty, score)) {
+                    self.add.text(config.width / 2, config.height / 2 + 70, 'NEW HIGH SCORE!', { fontSize: '32px', fill: '#ff0' }).setOrigin(0.5);
+                    self.add.text(config.width / 2, config.height / 2 + 110, 'Press SPACE to continue', { fontSize: '24px', fill: '#aaa' }).setOrigin(0.5);
+                } else {
+                    self.add.text(config.width / 2, config.height / 2 + 80, 'Press SPACE to continue', { fontSize: '24px', fill: '#aaa' }).setOrigin(0.5);
+                }
+                self.time.delayedCall(500, () => { canRestart = true; });
+            }
+
+            // win handler with descent animation
+            var scene = this;
+            let winHandler = () => {
+                gameOver = true;
+                scoreTimer.remove();
+                stopOrganMusic();
+                player.body.setVelocity(0, 0);
+
+                // play fanfare
+                playFanfare();
+
+                // calculate rows to descend and bonus points
+                var rowHeight = 40;
+                var targetY = config.height - 30;
+                var rowsToDescend = Math.floor((targetY - player.y) / rowHeight);
+                var bonusPoints = rowsToDescend * 5;
+
+                // start descent after fanfare
+                scene.time.delayedCall(700, () => {
+                    startFuelSound();
+
+                    // falling leaf descent tween
+                    var duration = rowsToDescend * 600;
+
+                    // add points gradually during descent
+                    var pointsAdded = 0;
+                    var pointDelay = duration / bonusPoints;
+                    var pointTimer = scene.time.addEvent({
+                        delay: pointDelay,
+                        callback: () => {
+                            if (pointsAdded < bonusPoints) {
+                                score++;
+                                pointsAdded++;
+                                scoreText.setText('Score: ' + score);
+                            }
+                        },
+                        repeat: bonusPoints - 1
+                    });
+
+                    scene.tweens.add({
+                        targets: player,
+                        y: targetY,
+                        duration: duration,
+                        ease: 'Sine.easeInOut'
+                    });
+
+                    // swinging left/right
+                    scene.tweens.add({
+                        targets: player,
+                        x: player.x + 80,
+                        duration: 800,
+                        yoyo: true,
+                        repeat: Math.floor(duration / 1600),
+                        ease: 'Sine.easeInOut'
+                    });
+
+                    // show final score when descent complete
+                    scene.time.delayedCall(duration, () => {
+                        stopFuelSound();
+                        scene.add.text(config.width / 2, config.height / 2 - 50, 'Score: ' + score, { fontSize: '64px', fill: '#fff', align: 'center' }).setOrigin(0.5);
+                        // check for high score
+                        if (checkAndUpdateHighScore(currentDifficulty, score)) {
+                            scene.add.text(config.width / 2, config.height / 2 + 20, 'NEW HIGH SCORE!', { fontSize: '32px', fill: '#ff0' }).setOrigin(0.5);
+                            scene.add.text(config.width / 2, config.height / 2 + 60, 'Press SPACE to continue', { fontSize: '24px', fill: '#aaa' }).setOrigin(0.5);
+                        } else {
+                            scene.add.text(config.width / 2, config.height / 2 + 30, 'Press SPACE to continue', { fontSize: '24px', fill: '#aaa' }).setOrigin(0.5);
+                        }
+                        scene.time.delayedCall(500, () => { canRestart = true; });
+                    });
+                });
+            }
+
+            // collision handling
+            function bombHitStar(bomb, star) {
+                starEmitter.explode(10, star.x, star.y);
+                bomb.destroy();
+                star.destroy();
+                playStarSound();
+                // check win condition
+                if (stars.countActive(true) === 0) {
+                    winHandler();
+                }
+            }
+
+            this.physics.add.collider(bombs, stars, bombHitStar);
+            this.physics.add.collider(player, stars, (player, stars) => {
+                player.destroy();
+                if (!gameOver) {
+                    playExplosionSound();
+                    overHandler('GAME OVER');
+                }
+            });
+        }
+
+        update() {
+            if (!gameOver) {
+                player.body.setVelocityX(ship_speed);
+                updateOrganTempo(ship_speed);
+
+                if (Phaser.Input.Keyboard.JustDown(spaceKey) && bombs.countActive(true) === 0) {
+                    var bomb = bombs.create(player.x, player.y, 'bombTexture');
+                    bomb.body.setAllowGravity(true);
+                }
+
+                // destroy bombs that fall off screen (penalize wasted shots)
+                bombs.children.each(function(bomb) {
+                    if (bomb.y > config.height) {
+                        score = Math.max(0, score - 5);
+                        scoreText.setText('Score: ' + score);
+                        playMissSound();
+                        bomb.destroy();
+                    }
+                });
+            }
+
+            // restart to title screen
+            if (canRestart && Phaser.Input.Keyboard.JustDown(spaceKey)) {
+                canRestart = false;
+                this.scene.start('TitleScene');
+            }
+        }
+    }
+
+    var config = {
+        type: Phaser.AUTO,
+        width: 800,
+        height: 500,
+        physics: {
+            default: 'arcade',
+            arcade: {
+                gravity: { y: 300 },
+                debug: false
+            }
+        },
+        scene: [TitleScene, GameScene]
+    };
+
+    var game = new Phaser.Game(config);
+
+</script>
+
+</body>
+</html>
