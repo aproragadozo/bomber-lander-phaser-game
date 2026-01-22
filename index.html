@@ -68,6 +68,7 @@
     var bombs;
     var spaceKey;
     var gameOver = false;
+    var gamePaused = false;
     var canRestart = false;
     var score = 500;
     var scoreText;
@@ -77,6 +78,7 @@
     var audioCtx;
     var starEmitter;
     var ship_speed;
+    var ship_startSpeed;
 
     function playStarSound() {
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -442,7 +444,8 @@
             }
 
             // Instructions
-            this.add.text(400, 450, 'Use UP/DOWN to select, ENTER to start', { fontSize: '18px', fill: '#aaa' }).setOrigin(0.5);
+            this.add.text(400, 440, 'Use UP/DOWN to select, ENTER to start', { fontSize: '18px', fill: '#aaa' }).setOrigin(0.5);
+            this.add.text(400, 465, 'SPACE to drop bomb, P to pause', { fontSize: '18px', fill: '#aaa' }).setOrigin(0.5);
 
             // Selector arrow
             this.arrow = this.add.text(280, 250 + this.selectedIndex * 60, '>', { fontSize: '32px', fill: '#ff0' }).setOrigin(0.5);
@@ -546,6 +549,7 @@
             // spaceship speed based on difficulty
             var settings = difficultySettings[currentDifficulty];
             ship_speed = settings.startSpeed;
+            ship_startSpeed = settings.startSpeed;
             var speedIncrement = settings.speedIncrement;
 
             player.body.onWorldBounds = true;
@@ -565,6 +569,13 @@
 
             // spacebar should drop bombs
             spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+
+            // pause key
+            this.pauseKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+            this.pauseText = this.add.text(config.width / 2, config.height / 2, 'PAUSED', { fontSize: '64px', fill: '#fff' }).setOrigin(0.5);
+            this.pauseText.setVisible(false);
+            this.pauseText.setDepth(100);
+            gamePaused = false;
 
             // bombs
             var graphics = this.add.graphics();
@@ -721,17 +732,36 @@
         }
 
         update(time, delta) {
-            // Animate background
+            // Animate background (always, even when paused)
             bgTime += delta;
             drawAnimatedBackground(this.bgGraphics, config.width, config.height, bgTime);
 
-            if (!gameOver) {
+            // Toggle pause with P key
+            if (Phaser.Input.Keyboard.JustDown(this.pauseKey) && !gameOver) {
+                gamePaused = !gamePaused;
+                if (gamePaused) {
+                    this.physics.pause();
+                    stopOrganMusic();
+                    this.pauseText.setVisible(true);
+                } else {
+                    this.physics.resume();
+                    startOrganMusic();
+                    this.pauseText.setVisible(false);
+                }
+            }
+
+            if (!gameOver && !gamePaused) {
                 player.body.setVelocityX(ship_speed);
                 updateOrganTempo(ship_speed);
 
                 if (Phaser.Input.Keyboard.JustDown(spaceKey) && bombs.countActive(true) === 0) {
                     var bomb = bombs.create(player.x, player.y, 'bombTexture');
                     bomb.body.setAllowGravity(true);
+                    // Give bomb initial downward velocity that scales with ship speed
+                    // This keeps trajectory angle consistent as ship speeds up
+                    var speedIncrease = Math.max(0, Math.abs(ship_speed) - ship_startSpeed);
+                    var initialVelocityY = speedIncrease * 2;
+                    bomb.body.setVelocityY(initialVelocityY);
                 }
 
                 // destroy bombs that fall off screen (penalize wasted shots)
