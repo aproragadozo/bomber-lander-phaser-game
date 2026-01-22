@@ -31,6 +31,28 @@ The game uses Phaser 3's Arcade Physics system with a single-scene architecture:
 
 Key game objects use `this.physics.add.group()` and `this.physics.add.sprite()` for physics-enabled entities. Collisions are handled via `this.physics.add.collider()`.
 
+## Game Scenes
+
+The game uses a multi-scene architecture with two scenes:
+
+- **TitleScene** - Menu screen with difficulty selection (easy/medium/hard) and high score display per difficulty
+- **GameScene** - Main gameplay with spaceship movement, bomb dropping, and star destruction
+
+Scene transitions use `this.scene.start('SceneName')`.
+
+## Key Game Systems
+
+**Difficulty System**: Three difficulty levels with different ship speeds and speed increments, configured in `difficultySettings` object.
+
+**High Score System**: Per-difficulty high scores stored in localStorage under key `starBomberHighScores`.
+
+**Audio System**: Web Audio API-based sound effects (no external audio files). Functions include:
+- `playStarSound()`, `playMissSound()`, `playExplosionSound()`, `playFanfare()`, `playSelectSound()`
+- `startFuelSound()`/`stopFuelSound()` for looping engine sound
+- `startOrganMusic()`/`stopOrganMusic()` for background music with tempo that adjusts to ship speed
+
+**Particle System**: Star explosion particles created via `this.add.particles()` with dynamically generated textures.
+
 ## Phaser Version
 
 The project loads Phaser 3.11.0 from CDN, though package.json references ^3.90.0 (not currently used since Phaser is loaded via script tag).
