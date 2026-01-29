@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
-    <title>Making your first Phaser 3 Game - Part 1</title>
+    <title>POTTY</title>
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+    <link rel="manifest" href="/site.webmanifest">
     <script src="//cdn.jsdelivr.net/npm/phaser@3.11.0/dist/phaser.js"></script>
     <style type="text/css">
         body {
@@ -512,6 +516,7 @@
             this.load.image('ground', 'assets/platform.png');
             this.load.image('star', 'assets/star.png');
             this.load.image('bomb', 'assets/bomb.png');
+            this.load.image('saucer', 'favicon-32x32.png');
             this.load.spritesheet('dude', 'assets/dude.png', { frameWidth: 32, frameHeight: 48 });
         }
 
@@ -542,7 +547,7 @@
             }
 
             // spaceship
-            player = this.physics.add.sprite(20, 20, 'bomb').setScale(2);
+            player = this.physics.add.sprite(20, 20, 'saucer');
             player.setCollideWorldBounds(true);
             player.body.setAllowGravity(false);
 
@@ -626,14 +631,8 @@
                 scoreTimer.remove();
                 stopOrganMusic();
                 self.physics.pause();
-                self.add.text(config.width / 2, config.height / 2, text + '\nScore: ' + score, { fontSize: '64px', fill: '#fff', align: 'center' }).setOrigin(0.5);
-                // check for high score
-                if (checkAndUpdateHighScore(currentDifficulty, score)) {
-                    self.add.text(config.width / 2, config.height / 2 + 70, 'NEW HIGH SCORE!', { fontSize: '32px', fill: '#ff0' }).setOrigin(0.5);
-                    self.add.text(config.width / 2, config.height / 2 + 110, 'Press SPACE to continue', { fontSize: '24px', fill: '#aaa' }).setOrigin(0.5);
-                } else {
-                    self.add.text(config.width / 2, config.height / 2 + 80, 'Press SPACE to continue', { fontSize: '24px', fill: '#aaa' }).setOrigin(0.5);
-                }
+                self.add.text(config.width / 2, config.height / 2, text, { fontSize: '64px', fill: '#fff', align: 'center' }).setOrigin(0.5);
+                self.add.text(config.width / 2, config.height / 2 + 50, 'Press SPACE to continue', { fontSize: '24px', fill: '#aaa' }).setOrigin(0.5);
                 self.time.delayedCall(500, () => { canRestart = true; });
             }
 
