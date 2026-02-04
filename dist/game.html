@@ -1,0 +1,805 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>POTTY</title>
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon-pCvZSc8F.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32-Qipmbo7l.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16-D0PHaVSa.png">
+    <link rel="manifest" href="/assets/site-BwHFeIBa.webmanifest">
+    <script src="//cdn.jsdelivr.net/npm/phaser@3.11.0/dist/phaser.js"></script>
+    <style type="text/css">
+        body {
+            margin: 0;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+    </style>
+</head>
+<body>
+
+<script type="text/javascript">
+
+    // Difficulty settings
+    var difficultySettings = {
+        easy: { startSpeed: 50, speedIncrement: 5 },
+        medium: { startSpeed: 80, speedIncrement: 10 },
+        hard: { startSpeed: 120, speedIncrement: 15 }
+    };
+    var currentDifficulty = 'medium';
+
+    // High score functions
+    function getHighScore(difficulty) {
+        try {
+            var data = localStorage.getItem('starBomberHighScores');
+            if (data) {
+                var scores = JSON.parse(data);
+                return scores[difficulty] || 0;
+            }
+        } catch (e) {
+            console.log('Error reading high scores:', e);
+        }
+        return 0;
+    }
+
+    function setHighScore(difficulty, newScore) {
+        try {
+            var data = localStorage.getItem('starBomberHighScores');
+            var scores = data ? JSON.parse(data) : {};
+            scores[difficulty] = newScore;
+            localStorage.setItem('starBomberHighScores', JSON.stringify(scores));
+        } catch (e) {
+            console.log('Error saving high score:', e);
+        }
+    }
+
+    function checkAndUpdateHighScore(difficulty, newScore) {
+        var currentHigh = getHighScore(difficulty);
+        if (newScore > currentHigh) {
+            setHighScore(difficulty, newScore);
+            return true; // new high score!
+        }
+        return false;
+    }
+
+    var player;
+    var stars;
+    var platforms;
+    var cursors;
+    var bombs;
+    var spaceKey;
+    var gameOver = false;
+    var gamePaused = false;
+    var canRestart = false;
+    var score = 500;
+    var scoreText;
+    var scoreTimer;
+    var columnSpacing = 40;
+    var startX = 20;
+    var audioCtx;
+    var starEmitter;
+    var ship_speed;
+    var ship_startSpeed;
+
+    function playStarSound() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        var oscillator = audioCtx.createOscillator();
+        var gainNode = audioCtx.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        oscillator.frequency.value = 600;
+        oscillator.type = 'square';
+        gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+        oscillator.start(audioCtx.currentTime);
+        oscillator.stop(audioCtx.currentTime + 0.1);
+    }
+
+    function playMissSound() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        var oscillator = audioCtx.createOscillator();
+        var gainNode = audioCtx.createGain();
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+        oscillator.frequency.setValueAtTime(200, audioCtx.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(80, audioCtx.currentTime + 0.2);
+        oscillator.type = 'sawtooth';
+        gainNode.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+        oscillator.start(audioCtx.currentTime);
+        oscillator.stop(audioCtx.currentTime + 0.2);
+    }
+
+    function playExplosionSound() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        // noise burst for explosion
+        var bufferSize = audioCtx.sampleRate * 0.5;
+        var buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+        var data = buffer.getChannelData(0);
+        for (var i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+        }
+        var noise = audioCtx.createBufferSource();
+        noise.buffer = buffer;
+        var noiseGain = audioCtx.createGain();
+        noise.connect(noiseGain);
+        noiseGain.connect(audioCtx.destination);
+        noiseGain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+        noiseGain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+        noise.start(audioCtx.currentTime);
+        noise.stop(audioCtx.currentTime + 0.5);
+        // low rumble
+        var oscillator = audioCtx.createOscillator();
+        var oscGain = audioCtx.createGain();
+        oscillator.connect(oscGain);
+        oscGain.connect(audioCtx.destination);
+        oscillator.frequency.setValueAtTime(80, audioCtx.currentTime);
+        oscillator.frequency.exponentialRampToValueAtTime(30, audioCtx.currentTime + 0.5);
+        oscillator.type = 'sine';
+        oscGain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        oscGain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+        oscillator.start(audioCtx.currentTime);
+        oscillator.stop(audioCtx.currentTime + 0.5);
+    }
+
+    function playFanfare() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        var notes = [523, 659, 784, 1047]; // C5, E5, G5, C6
+        notes.forEach(function(freq, i) {
+            var osc = audioCtx.createOscillator();
+            var gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.frequency.value = freq;
+            osc.type = 'triangle';
+            var startTime = audioCtx.currentTime + i * 0.15;
+            gain.gain.setValueAtTime(0, startTime);
+            gain.gain.linearRampToValueAtTime(0.3, startTime + 0.05);
+            gain.gain.linearRampToValueAtTime(0.15, startTime + 0.3);
+            gain.gain.linearRampToValueAtTime(0, startTime + 0.5);
+            osc.start(startTime);
+            osc.stop(startTime + 0.5);
+        });
+    }
+
+    function playSelectSound() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        var osc = audioCtx.createOscillator();
+        var gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.frequency.value = 440;
+        osc.type = 'sine';
+        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+        osc.start(audioCtx.currentTime);
+        osc.stop(audioCtx.currentTime + 0.1);
+    }
+
+    var fuelSoundOsc = null;
+    var fuelSoundGain = null;
+    function startFuelSound() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        fuelSoundOsc = audioCtx.createOscillator();
+        fuelSoundGain = audioCtx.createGain();
+        var filter = audioCtx.createBiquadFilter();
+        fuelSoundOsc.connect(filter);
+        filter.connect(fuelSoundGain);
+        fuelSoundGain.connect(audioCtx.destination);
+        fuelSoundOsc.type = 'sawtooth';
+        fuelSoundOsc.frequency.value = 60;
+        filter.type = 'lowpass';
+        filter.frequency.value = 200;
+        fuelSoundGain.gain.value = 0.15;
+        // modulate frequency for bubbling effect
+        var lfo = audioCtx.createOscillator();
+        var lfoGain = audioCtx.createGain();
+        lfo.connect(lfoGain);
+        lfoGain.connect(fuelSoundOsc.frequency);
+        lfo.frequency.value = 8;
+        lfoGain.gain.value = 20;
+        lfo.start();
+        fuelSoundOsc.start();
+    }
+
+    function stopFuelSound() {
+        if (fuelSoundGain) {
+            fuelSoundGain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+        }
+        if (fuelSoundOsc) {
+            fuelSoundOsc.stop(audioCtx.currentTime + 0.3);
+            fuelSoundOsc = null;
+        }
+    }
+
+    // Basketball organ music
+    var organPlaying = false;
+    var organInterval = null;
+    var organTempo = 200; // ms between notes
+    var organNoteIndex = 0;
+    var organGainNode = null;
+
+    // Classic basketball organ riff pattern (frequencies in Hz)
+    var organPattern = [
+        [392, 494], // G4, B4
+        [440, 554], // A4, C#5
+        [494, 622], // B4, D#5
+        [523, 659], // C5, E5
+        [494, 622], // B4, D#5
+        [440, 554], // A4, C#5
+        [392, 494], // G4, B4
+        [330, 415], // E4, G#4
+    ];
+
+    function playOrganNote(frequencies, duration) {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        // Create organ sound with multiple harmonics
+        frequencies.forEach(function(freq) {
+            // Fundamental
+            var osc1 = audioCtx.createOscillator();
+            var osc2 = audioCtx.createOscillator();
+            var osc3 = audioCtx.createOscillator();
+
+            var gain = audioCtx.createGain();
+
+            osc1.type = 'sine';
+            osc1.frequency.value = freq;
+
+            osc2.type = 'sine';
+            osc2.frequency.value = freq * 2; // 2nd harmonic
+
+            osc3.type = 'triangle';
+            osc3.frequency.value = freq * 3; // 3rd harmonic
+
+            osc1.connect(gain);
+            osc2.connect(gain);
+            osc3.connect(gain);
+
+            if (!organGainNode) {
+                organGainNode = audioCtx.createGain();
+                organGainNode.connect(audioCtx.destination);
+                organGainNode.gain.value = 0.08;
+            }
+            gain.connect(organGainNode);
+
+            gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.12, audioCtx.currentTime + duration * 0.1);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+
+            osc1.start(audioCtx.currentTime);
+            osc2.start(audioCtx.currentTime);
+            osc3.start(audioCtx.currentTime);
+
+            osc1.stop(audioCtx.currentTime + duration);
+            osc2.stop(audioCtx.currentTime + duration);
+            osc3.stop(audioCtx.currentTime + duration);
+        });
+    }
+
+    function startOrganMusic() {
+        if (organPlaying) return;
+        organPlaying = true;
+        organNoteIndex = 0;
+
+        function playNextNote() {
+            if (!organPlaying) return;
+
+            var note = organPattern[organNoteIndex % organPattern.length];
+            playOrganNote(note, organTempo / 1000 * 0.8);
+
+            organNoteIndex++;
+
+            organInterval = setTimeout(playNextNote, organTempo);
+        }
+
+        playNextNote();
+    }
+
+    function stopOrganMusic() {
+        organPlaying = false;
+        if (organInterval) {
+            clearTimeout(organInterval);
+            organInterval = null;
+        }
+    }
+
+    function updateOrganTempo(speed) {
+        // Map ship speed to tempo: faster ship = faster music
+        // Speed ranges roughly from 50-200+, map to tempo 250-100ms
+        var absSpeed = Math.abs(speed);
+        organTempo = Math.max(80, 300 - absSpeed);
+    }
+
+    // Simplex noise implementation for organic background patterns
+    var SimplexNoise = (function() {
+        var F2 = 0.5 * (Math.sqrt(3) - 1);
+        var G2 = (3 - Math.sqrt(3)) / 6;
+        var grad3 = [[1,1,0],[-1,1,0],[1,-1,0],[-1,-1,0],[1,0,1],[-1,0,1],[1,0,-1],[-1,0,-1],[0,1,1],[0,-1,1],[0,1,-1],[0,-1,-1]];
+        var perm = [];
+        var permMod12 = [];
+
+        // Initialize with seed
+        for (var i = 0; i < 256; i++) {
+            perm[i] = perm[i + 256] = Math.floor(Math.random() * 256);
+            permMod12[i] = permMod12[i + 256] = perm[i] % 12;
+        }
+
+        function dot2(g, x, y) {
+            return g[0] * x + g[1] * y;
+        }
+
+        return {
+            noise2D: function(xin, yin) {
+                var n0, n1, n2;
+                var s = (xin + yin) * F2;
+                var i = Math.floor(xin + s);
+                var j = Math.floor(yin + s);
+                var t = (i + j) * G2;
+                var X0 = i - t;
+                var Y0 = j - t;
+                var x0 = xin - X0;
+                var y0 = yin - Y0;
+                var i1, j1;
+                if (x0 > y0) { i1 = 1; j1 = 0; }
+                else { i1 = 0; j1 = 1; }
+                var x1 = x0 - i1 + G2;
+                var y1 = y0 - j1 + G2;
+                var x2 = x0 - 1 + 2 * G2;
+                var y2 = y0 - 1 + 2 * G2;
+                var ii = i & 255;
+                var jj = j & 255;
+                var gi0 = permMod12[ii + perm[jj]];
+                var gi1 = permMod12[ii + i1 + perm[jj + j1]];
+                var gi2 = permMod12[ii + 1 + perm[jj + 1]];
+                var t0 = 0.5 - x0 * x0 - y0 * y0;
+                if (t0 < 0) n0 = 0;
+                else { t0 *= t0; n0 = t0 * t0 * dot2(grad3[gi0], x0, y0); }
+                var t1 = 0.5 - x1 * x1 - y1 * y1;
+                if (t1 < 0) n1 = 0;
+                else { t1 *= t1; n1 = t1 * t1 * dot2(grad3[gi1], x1, y1); }
+                var t2 = 0.5 - x2 * x2 - y2 * y2;
+                if (t2 < 0) n2 = 0;
+                else { t2 *= t2; n2 = t2 * t2 * dot2(grad3[gi2], x2, y2); }
+                return 70 * (n0 + n1 + n2);
+            }
+        };
+    })();
+
+    // Animated background system
+    var bgTime = 0;
+    var bgColors = [
+        { r: 0xDB, g: 0xCB, b: 0xD8 }, // DBCBD8 - soft lavender
+        { r: 0xF2, g: 0xFD, b: 0xFF }, // F2FDFF - pale ice blue
+        { r: 0x9A, g: 0xD4, b: 0xD6 }  // 9AD4D6 - soft teal
+    ];
+    var bgAlpha = 0.3;
+
+    function drawAnimatedBackground(graphics, width, height, time) {
+        graphics.clear();
+
+        var resolution = 8; // pixel size for performance
+        var noiseScale = 0.008; // scale of the noise pattern
+        var timeScale = 0.0003; // speed of animation
+
+        for (var y = 0; y < height; y += resolution) {
+            for (var x = 0; x < width; x += resolution) {
+                // Use multiple octaves of noise for more organic look
+                var noise1 = SimplexNoise.noise2D(x * noiseScale, y * noiseScale + time * timeScale);
+                var noise2 = SimplexNoise.noise2D(x * noiseScale * 2 + 100, y * noiseScale * 2 + time * timeScale * 1.5);
+                var noise3 = SimplexNoise.noise2D(x * noiseScale * 0.5 + 200, y * noiseScale * 0.5 + time * timeScale * 0.7);
+
+                // Combine noises for more interesting patterns
+                var combined = (noise1 + noise2 * 0.5 + noise3 * 0.3) / 1.8;
+
+                // Map noise to color index (creates stripe-like regions)
+                var colorVal = (combined + 1) / 2; // normalize to 0-1
+
+                // Create softer transitions between colors
+                var colorIndex;
+                if (colorVal < 0.33) {
+                    colorIndex = 0;
+                } else if (colorVal < 0.66) {
+                    colorIndex = 1;
+                } else {
+                    colorIndex = 2;
+                }
+
+                var col = bgColors[colorIndex];
+                var color = (col.r << 16) | (col.g << 8) | col.b;
+
+                graphics.fillStyle(color, bgAlpha);
+                graphics.fillRect(x, y, resolution, resolution);
+            }
+        }
+    }
+
+    // Title Scene
+    class TitleScene extends Phaser.Scene {
+        constructor() {
+            super({ key: 'TitleScene' });
+        }
+
+        create() {
+            var self = this;
+            this.selectedIndex = 1; // Start on medium
+            this.options = ['easy', 'medium', 'hard'];
+
+            // Animated background
+            this.bgGraphics = this.add.graphics();
+            this.bgGraphics.setDepth(-1);
+
+            // Title
+            this.add.text(400, 120, 'STAR BOMBER', { fontSize: '64px', fill: '#fff' }).setOrigin(0.5);
+
+            // Difficulty options with high scores
+            this.optionTexts = [];
+            this.highScoreTexts = [];
+            var labels = ['EASY', 'MEDIUM', 'HARD'];
+            for (var i = 0; i < 3; i++) {
+                var text = this.add.text(400, 250 + i * 60, labels[i], { fontSize: '32px', fill: '#fff' }).setOrigin(0.5);
+                this.optionTexts.push(text);
+                var highScore = getHighScore(this.options[i]);
+                var hsText = this.add.text(520, 250 + i * 60, highScore > 0 ? 'HI: ' + highScore : '', { fontSize: '18px', fill: '#888' }).setOrigin(0, 0.5);
+                this.highScoreTexts.push(hsText);
+            }
+
+            // Instructions
+            this.add.text(400, 440, 'Use UP/DOWN to select, ENTER to start', { fontSize: '18px', fill: '#aaa' }).setOrigin(0.5);
+            this.add.text(400, 465, 'SPACE to drop bomb, P to pause', { fontSize: '18px', fill: '#aaa' }).setOrigin(0.5);
+
+            // Selector arrow
+            this.arrow = this.add.text(280, 250 + this.selectedIndex * 60, '>', { fontSize: '32px', fill: '#ff0' }).setOrigin(0.5);
+
+            this.updateSelection();
+
+            // Input
+            this.cursors = this.input.keyboard.createCursorKeys();
+            this.enterKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
+
+            this.canInput = true;
+        }
+
+        updateSelection() {
+            // Update arrow position
+            this.arrow.y = 250 + this.selectedIndex * 60;
+
+            // Update text colors
+            for (var i = 0; i < this.optionTexts.length; i++) {
+                if (i === this.selectedIndex) {
+                    this.optionTexts[i].setFill('#ff0');
+                } else {
+                    this.optionTexts[i].setFill('#fff');
+                }
+            }
+        }
+
+        update(time, delta) {
+            // Animate background
+            bgTime += delta;
+            drawAnimatedBackground(this.bgGraphics, config.width, config.height, bgTime);
+
+            if (!this.canInput) return;
+
+            if (Phaser.Input.Keyboard.JustDown(this.cursors.up)) {
+                this.selectedIndex = (this.selectedIndex - 1 + 3) % 3;
+                playSelectSound();
+                this.updateSelection();
+            } else if (Phaser.Input.Keyboard.JustDown(this.cursors.down)) {
+                this.selectedIndex = (this.selectedIndex + 1) % 3;
+                playSelectSound();
+                this.updateSelection();
+            }
+
+            if (Phaser.Input.Keyboard.JustDown(this.enterKey)) {
+                this.canInput = false;
+                currentDifficulty = this.options[this.selectedIndex];
+                playFanfare();
+                this.time.delayedCall(600, () => {
+                    this.scene.start('GameScene');
+                });
+            }
+        }
+    }
+
+    // Game Scene
+    class GameScene extends Phaser.Scene {
+        constructor() {
+            super({ key: 'GameScene' });
+        }
+
+        preload() {
+            this.load.image('sky', 'assets/sky.png');
+            this.load.image('ground', 'assets/platform.png');
+            this.load.image('star', 'assets/star.png');
+            this.load.image('bomb', 'assets/bomb.png');
+            this.load.image('saucer', 'favicon-32x32.png');
+            this.load.spritesheet('dude', 'assets/dude.png', { frameWidth: 32, frameHeight: 48 });
+        }
+
+        create() {
+            gameOver = false;
+
+            // Animated background
+            this.bgGraphics = this.add.graphics();
+            this.bgGraphics.setDepth(-1);
+
+            stars = this.physics.add.group();
+            var numColumns = 20;
+            // stack the stars in columns of varying heights
+            for (var col = 0; col < numColumns; col++) {
+                var height = Phaser.Math.Between(1, 5);
+                var xPos = startX + (col * columnSpacing);
+
+                // nested loop
+                for (var row = 0; row < height; row++) {
+                    var yPos = 500 - 20 - (row * 40);
+                    // here's where I actually create the stars to add to the group
+                    var star = stars.create(xPos, yPos, 'star');
+                    star.setScale(1.6);
+                    star.setCollideWorldBounds(true);
+                    star.body.setAllowGravity(false);
+                    star.setImmovable(true);
+                }
+            }
+
+            // spaceship
+            player = this.physics.add.sprite(20, 20, 'saucer');
+            player.setCollideWorldBounds(true);
+            player.body.setAllowGravity(false);
+
+            // spaceship speed based on difficulty
+            var settings = difficultySettings[currentDifficulty];
+            ship_speed = settings.startSpeed;
+            ship_startSpeed = settings.startSpeed;
+            var speedIncrement = settings.speedIncrement;
+
+            player.body.onWorldBounds = true;
+
+            player.onWorldBounds = function() {
+                this.y += 20;
+                // speed up slightly each row
+                var sign = ship_speed > 0 ? 1 : -1;
+                ship_speed = -sign * (Math.abs(ship_speed) + speedIncrement);
+            };
+
+            this.physics.world.on('worldbounds', (body) => {
+                body.gameObject.onWorldBounds();
+            });
+
+            bombs = this.physics.add.group();
+
+            // spacebar should drop bombs
+            spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+
+            // pause key
+            this.pauseKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.P);
+            this.pauseText = this.add.text(config.width / 2, config.height / 2, 'PAUSED', { fontSize: '64px', fill: '#fff' }).setOrigin(0.5);
+            this.pauseText.setVisible(false);
+            this.pauseText.setDepth(100);
+            gamePaused = false;
+
+            // bombs
+            var graphics = this.add.graphics();
+            graphics.fillStyle(0xffffff, 1);
+            graphics.fillRect(0, 0, 6, 12);
+            graphics.generateTexture('bombTexture', 6, 12);
+            // particle texture
+            graphics.clear();
+            graphics.fillStyle(0xffff00, 1);
+            graphics.fillRect(0, 0, 4, 4);
+            graphics.generateTexture('particleTexture', 4, 4);
+            graphics.destroy();
+
+            // particle emitter for star explosions
+            var particles = this.add.particles('particleTexture');
+            starEmitter = particles.createEmitter({
+                speed: { min: 50, max: 150 },
+                angle: { min: 0, max: 360 },
+                scale: { start: 1, end: 0 },
+                lifespan: 400,
+                gravityY: 200,
+                on: false
+            });
+
+            // score display
+            score = 500;
+            scoreText = this.add.text(config.width - 16, 16, 'Score: ' + score, { fontSize: '24px', fill: '#fff' }).setOrigin(1, 0);
+
+            // start background music
+            startOrganMusic();
+
+            // score countdown timer
+            scoreTimer = this.time.addEvent({
+                delay: 1000,
+                callback: () => {
+                    if (!gameOver && score > 0) {
+                        score--;
+                        scoreText.setText('Score: ' + score);
+                    }
+                },
+                loop: true
+            });
+
+            // game over method
+            var self = this;
+            let overHandler = (text) => {
+                gameOver = true;
+                scoreTimer.remove();
+                stopOrganMusic();
+                self.physics.pause();
+                self.add.text(config.width / 2, config.height / 2, text, { fontSize: '64px', fill: '#fff', align: 'center' }).setOrigin(0.5);
+                self.add.text(config.width / 2, config.height / 2 + 50, 'Press SPACE to continue', { fontSize: '24px', fill: '#aaa' }).setOrigin(0.5);
+                self.time.delayedCall(500, () => { canRestart = true; });
+            }
+
+            // win handler with descent animation
+            var scene = this;
+            let winHandler = () => {
+                gameOver = true;
+                scoreTimer.remove();
+                stopOrganMusic();
+                player.body.setVelocity(0, 0);
+
+                // play fanfare
+                playFanfare();
+
+                // calculate rows to descend and bonus points
+                var rowHeight = 40;
+                var targetY = config.height - 30;
+                var rowsToDescend = Math.floor((targetY - player.y) / rowHeight);
+                var bonusPoints = rowsToDescend * 5;
+
+                // start descent after fanfare
+                scene.time.delayedCall(700, () => {
+                    startFuelSound();
+
+                    // falling leaf descent tween
+                    var duration = rowsToDescend * 600;
+
+                    // add points gradually during descent
+                    var pointsAdded = 0;
+                    var pointDelay = duration / bonusPoints;
+                    var pointTimer = scene.time.addEvent({
+                        delay: pointDelay,
+                        callback: () => {
+                            if (pointsAdded < bonusPoints) {
+                                score++;
+                                pointsAdded++;
+                                scoreText.setText('Score: ' + score);
+                            }
+                        },
+                        repeat: bonusPoints - 1
+                    });
+
+                    scene.tweens.add({
+                        targets: player,
+                        y: targetY,
+                        duration: duration,
+                        ease: 'Sine.easeInOut'
+                    });
+
+                    // swinging left/right
+                    scene.tweens.add({
+                        targets: player,
+                        x: player.x + 80,
+                        duration: 800,
+                        yoyo: true,
+                        repeat: Math.floor(duration / 1600),
+                        ease: 'Sine.easeInOut'
+                    });
+
+                    // show final score when descent complete
+                    scene.time.delayedCall(duration, () => {
+                        stopFuelSound();
+                        scene.add.text(config.width / 2, config.height / 2 - 50, 'Score: ' + score, { fontSize: '64px', fill: '#fff', align: 'center' }).setOrigin(0.5);
+                        // check for high score
+                        if (checkAndUpdateHighScore(currentDifficulty, score)) {
+                            scene.add.text(config.width / 2, config.height / 2 + 20, 'NEW HIGH SCORE!', { fontSize: '32px', fill: '#ff0' }).setOrigin(0.5);
+                            scene.add.text(config.width / 2, config.height / 2 + 60, 'Press SPACE to continue', { fontSize: '24px', fill: '#aaa' }).setOrigin(0.5);
+                        } else {
+                            scene.add.text(config.width / 2, config.height / 2 + 30, 'Press SPACE to continue', { fontSize: '24px', fill: '#aaa' }).setOrigin(0.5);
+                        }
+                        scene.time.delayedCall(500, () => { canRestart = true; });
+                    });
+                });
+            }
+
+            // collision handling
+            function bombHitStar(bomb, star) {
+                starEmitter.explode(10, star.x, star.y);
+                bomb.destroy();
+                star.destroy();
+                playStarSound();
+                // check win condition
+                if (stars.countActive(true) === 0) {
+                    winHandler();
+                }
+            }
+
+            this.physics.add.collider(bombs, stars, bombHitStar);
+            this.physics.add.collider(player, stars, (player, stars) => {
+                player.destroy();
+                if (!gameOver) {
+                    playExplosionSound();
+                    overHandler('GAME OVER');
+                }
+            });
+        }
+
+        update(time, delta) {
+            // Animate background (always, even when paused)
+            bgTime += delta;
+            drawAnimatedBackground(this.bgGraphics, config.width, config.height, bgTime);
+
+            // Toggle pause with P key
+            if (Phaser.Input.Keyboard.JustDown(this.pauseKey) && !gameOver) {
+                gamePaused = !gamePaused;
+                if (gamePaused) {
+                    this.physics.pause();
+                    stopOrganMusic();
+                    this.pauseText.setVisible(true);
+                } else {
+                    this.physics.resume();
+                    startOrganMusic();
+                    this.pauseText.setVisible(false);
+                }
+            }
+
+            if (!gameOver && !gamePaused) {
+                player.body.setVelocityX(ship_speed);
+                updateOrganTempo(ship_speed);
+
+                if (Phaser.Input.Keyboard.JustDown(spaceKey) && bombs.countActive(true) === 0) {
+                    var bomb = bombs.create(player.x, player.y, 'bombTexture');
+                    bomb.body.setAllowGravity(true);
+                    // Give bomb initial downward velocity that scales with ship speed
+                    // This keeps trajectory angle consistent as ship speeds up
+                    var speedIncrease = Math.max(0, Math.abs(ship_speed) - ship_startSpeed);
+                    var initialVelocityY = speedIncrease * 2;
+                    bomb.body.setVelocityY(initialVelocityY);
+                }
+
+                // destroy bombs that fall off screen (penalize wasted shots)
+                bombs.children.each(function(bomb) {
+                    if (bomb.y > config.height) {
+                        score = Math.max(0, score - 5);
+                        scoreText.setText('Score: ' + score);
+                        playMissSound();
+                        bomb.destroy();
+                    }
+                });
+            }
+
+            // restart to title screen
+            if (canRestart && Phaser.Input.Keyboard.JustDown(spaceKey)) {
+                canRestart = false;
+                this.scene.start('TitleScene');
+            }
+        }
+    }
+
+    var config = {
+        type: Phaser.AUTO,
+        width: 800,
+        height: 500,
+        backgroundColor: '#000000',
+        physics: {
+            default: 'arcade',
+            arcade: {
+                gravity: { y: 300 },
+                debug: false
+            }
+        },
+        scene: [TitleScene, GameScene]
+    };
+
+    var game = new Phaser.Game(config);
+
+</script>
+
+</body>
+</html>
